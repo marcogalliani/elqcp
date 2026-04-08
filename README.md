@@ -1,4 +1,4 @@
-# elqcp
+f# elqcp
 
 Solvers for the **Extended Linear-Quadratic Optimal Control Problem (ELQCP)**, implemented in C.
 
