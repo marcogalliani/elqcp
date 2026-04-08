@@ -1,6 +1,6 @@
-f# elqcp
+# elqcp
 
-Solvers for the **Extended Linear-Quadratic Optimal Control Problem (ELQCP)**, implemented in C.
+Solvers for the **Extended Linear-Quadratic Optimal Control Problem (ELQCP)**, implemented in C++ using Eigen for efficient sparse and structured linear algebra.
 
 Based on:
 > Jørgensen, J. B. (2004). *Moving Horizon Estimation and Control*. PhD thesis, Technical University of Denmark.
@@ -30,9 +30,9 @@ The initial state $x_0$ is a fixed parameter, not a decision variable.
 
 ## Solvers
 
-### 1. Riccati Recursion (`src/riccati.c`)
+### 1. Riccati Recursion (`src/riccati.cpp`)
 
-Implements **Algorithm 1** (§4.3.1, Proposition 4.3.5).  
+Implements **Algorithm 1** (§4.3.1, Proposition 4.3.5) in C++ using Eigen's dense linear algebra.
 Exploits the block-tridiagonal structure of the KKT matrix via dynamic programming.
 
 **Complexity:** $O(N \cdot (n_x^2 n_u + n_u^3))$ — **linear in $N$**.
@@ -62,7 +62,7 @@ x_{k+1} = A xₖ + B uₖ + b
 
 ---
 
-### 2. Sparse KKT Solver (`src/kkt_sparse_solver.c`) — recommended
+### 2. Sparse KKT Solver (`src/kkt_sparse_solver.cpp`) — recommended
 
 Formulates the ELQCP as an equality-constrained QP (§4.4.1):
 
@@ -70,23 +70,11 @@ $$\begin{pmatrix} G & -C \\ -C^\top & 0 \end{pmatrix} \begin{pmatrix} y \\ \pi \
 
 with $y = [u_0,\, x_1,\, u_1,\, \ldots,\, u_{N-1},\, x_N]$.
 
-The KKT matrix has **block-banded, symmetric indefinite** structure with $O(N(n_x+n_u)^2)$ nonzeros — linear in $N$. It is assembled in sparse COO format, converted to CSC, and solved with **UMFPACK** (SuiteSparse sparse LU), as recommended by Jørgensen et al. (2012), eq. (43)/(46):
+The KKT matrix has **block-banded, symmetric indefinite** structure with $O(N(n_x+n_u)^2)$ nonzeros — linear in $N$. It is assembled in sparse COO format and solved with **Eigen::SparseLU** (supernodal LU with COLAMD fill-reducing ordering), which correctly handles the symmetric indefinite structure via partial pivoting.
 
-> *"(43) and (46) are symmetric indefinite and may be solved by direct sparse algorithms such as MA57, PARDISO, and SuiteSparse."*
+**Note:** The KKT matrix is structurally symmetric but the current solver treats it as general unsymmetric (for portability and stability). See *Optimization Note* below for advanced alternatives.
 
 **Complexity:** $O(N \cdot (n_x + n_u)^3)$ — **linear in $N$** for fixed system dimensions.
-
-**Requires:** SuiteSparse (`brew install suite-sparse` / `apt-get install libsuitesparse-dev`).
-
----
-
-### 3. Dense KKT Solver (`src/kkt_solver.c`) — reference only
-
-Same KKT formulation but assembled as a **full dense matrix** and solved with **dense LU** (Gaussian elimination with partial pivoting).
-
-**Complexity:** $O\!\left((N(n_x + n_u))^3\right)$ — **cubic in $N$**.
-
-Deliberately ignores all structure. Included only to demonstrate why dense methods are inappropriate here; use the sparse solver in practice.
 
 ---
 
@@ -96,54 +84,50 @@ Deliberately ignores all structure. Included only to demonstrate why dense metho
 elqcp/
 ├── CMakeLists.txt
 ├── include/
-│   ├── elqcp.h          # Problem/solution structs and solver API
-│   └── linalg.h         # Dense linear algebra declarations
+│   └── elqcp.hpp        # Problem/solution structs and solver API (C++ / Eigen)
 ├── src/
-│   ├── linalg.c         # mat_mul, Cholesky, fwd/bwd substitution, LU
-│   ├── riccati.c        # elqcp_solve_riccati() + alloc/free helpers
-│   ├── kkt_sparse_solver.c  # elqcp_solve_kkt_sparse() — UMFPACK-based
-│   └── kkt_solver.c     # elqcp_solve_kkt() — dense LU reference
+│   ├── riccati.cpp      # elqcp_solve_riccati() + alloc helper
+│   └── kkt_sparse_solver.cpp  # elqcp_solve_kkt_sparse() via Eigen::SparseLU
 ├── examples/
-│   └── compare_solvers.c  # Three-way timing comparison
+│   ├── compare_solvers.cpp  # Riccati vs sparse KKT timing benchmark
+│   └── plot_scaling.py      # Matplotlib script: timing graphs
 └── docs/
-    ├── jorgensen-2005.pdf
-    └── jorgensen-2012.pdf
+    ├── jorgensen-2004.pdf   # Moving Horizon Estimation and Control (PhD thesis)
+    ├── jorgensen-2012.pdf   # Numerical Methods for Solution of the ELQCP (IFAC NMPC)
+    └── OPTIMIZATION_NOTE.md # Symmetric indefinite solver options
 ```
 
-All matrices are stored **row-major**: `A[i*cols + j]` = element (i, j).
+All matrices are stored in **Eigen's default Eigen::RowMajor** (for explicit dense matrices) or **Eigen::ColMajor** for sparse matrices.
 
 ---
 
 ## Build
 
-**Requirements:** CMake ≥ 3.10, a C99 compiler, math library, and SuiteSparse (for the sparse solver).
+**Requirements:** CMake ≥ 3.14, a C++17 compiler, and Eigen3 (header-only).
 
 ```bash
 # macOS
-brew install suite-sparse
+brew install eigen
 
 # Ubuntu / Debian
-# apt-get install libsuitesparse-dev
+apt-get install libeigen3-dev
 
+# Build
 mkdir build && cd build
 cmake ..
-make
-```
-
-CMake will report whether UMFPACK was found:
-```
--- UMFPACK found — sparse KKT solver enabled
+make -j4
 ```
 
 This builds:
-- `libelqcp_lib.a` — static library (all solvers)
-- `compare_solvers` — timing comparison example
+- `libelqcp_lib.a` — static library (Riccati and sparse KKT solvers)
+- `compare_solvers` — timing/correctness benchmark
 
 ---
 
 ## Run the Example
 
 ```bash
+cd build
 ./compare_solvers
 ```
 
@@ -151,56 +135,104 @@ This builds:
 
 $$A = \begin{pmatrix} 0.9 & 0.1 \\ 0 & 0.8 \end{pmatrix}, \quad B = \begin{pmatrix} 0 \\ 1 \end{pmatrix}, \quad Q = I_2, \quad R = 0.01, \quad x_0 = (1, 0)^\top$$
 
-### Sample output
+### Sample output (timing in microseconds, N=5 to 5000)
 
 ```
-N       Riccati(us)     SpKKT(us)       DenseKKT(us)    Sp/Ricc     Dense/Ricc  u diff (max)
-------  --------------  --------------  --------------  ----------  ----------  ------------
-5       7.90            499.85          6.35            63.3x       0.8x        8.33e-17
-10      7.05            46.30           24.90           6.6x        3.5x        6.42e-17
-20      11.95           114.00          170.55          9.5x        14.3x       9.54e-17
-50      30.85           236.55          2052.40         7.7x        66.5x       1.28e-16
-100     52.40           401.55          16210.95        7.7x        309.4x      6.94e-17
-200     104.60          861.15          126349.00       8.2x        1207.9x     2.78e-16
-500     255.95          2187.10         2354514.95      8.5x        9199.1x     2.78e-16
-1000    502.15          4173.00         skipped         8.3x        ---         3.33e-16
-2000    1017.20         8617.70         skipped         8.5x        ---         2.78e-16
+Extended LQR: solver timing comparison
+System: nx=2, nu=1, x0=[1,0]
+Sparse KKT solver: Eigen::SparseLU (COLAMDOrdering)
+
+N       Riccati(us)     SpKKT(us)       Sp/Ricc     u diff (max)
+------  --------------  --------------  ----------  -----------
+5       17              27              1.6x        1.11e-16
+10      18              32              1.8x        8.88e-17
+20      20              45              2.2x        3.33e-16
+50      56              145             2.6x        2.22e-16
+100     65              280             4.3x        1.11e-16
+200     135             550             4.1x        3.33e-16
+500     270             1437            5.3x        2.78e-16
+1000    590             2885            4.9x        2.78e-16
+2000    1185            5932            5.0x        3.33e-16
+5000    3067            14680           4.8x        1.28e-16
 ```
 
 **Key observations:**
 
-- **Riccati** and **Sparse KKT** both scale **linearly** with $N$ (confirmed for $N = 5$ to $2000$).
-- **Dense KKT** scales **cubically**: 9200× slower than Riccati at $N = 500$.
-- Sparse KKT is ~8× slower than Riccati due to UMFPACK's symbolic factorization overhead (amortized when the same sparsity pattern is reused across many solves, as in MPC).
-- All three solvers agree to **machine precision** ($\approx 10^{-16}$).
+- **Riccati** and **Sparse KKT** both scale **linearly** with $N$ (confirmed for $N = 5$ to $5000$).
+- Both solvers agree to **machine precision** ($\approx 10^{-16}$).
+- Riccati recursion is 4–5× faster than sparse KKT across all $N$, owing to:
+  - Riccati's tighter O(N·nu³) operations on small blocks
+  - Sparse KKT's overhead from assembling and factoring the full KKT matrix
+  - When the same sparsity pattern is reused across many solves (e.g., MPC), the sparse solver overhead is amortized
+- Both show excellent scaling and are suitable for large prediction horizons.
 
-The Sp/Ricc ratio at $N = 5$ (63×) is dominated by UMFPACK's one-time symbolic factorization overhead; it stabilizes at ~8× for all larger $N$.
+### Python visualization
+
+```bash
+python3 plot_scaling.py
+```
+
+Generates:
+- `scaling.png` — log-log plot of solve time vs. horizon length
+- `scaling_ratio.png` — semilog-x plot of SparseLU/Riccati ratio
 
 ---
 
 ## API
 
-```c
-#include "elqcp.h"
+```cpp
+#include "elqcp.hpp"
+#include <Eigen/Dense>
 
-// Allocate problem (all arrays zero-initialized)
-ELQCP *prob = elqcp_alloc(N, nx, nu);
+// Create problem instance
+ELQCP prob;
+prob.N = 100;
+prob.nx = 2;
+prob.nu = 1;
 
-// Fill prob->A[k], prob->B[k], prob->Q[k], prob->R[k], ...
-// (see include/elqcp.h for the full struct definition)
+// Allocate and fill problem data (Eigen vectors/matrices)
+prob.Q.resize(prob.N);
+prob.M.resize(prob.N);
+prob.R.resize(prob.N);
+// ... fill A[k], B[k], Q[k], R[k], q[k], r[k], b[k], f[k] ...
+prob.P_N = Eigen::MatrixXd::Identity(2, 2);
 
 // Allocate solution
-ELQCPSol *sol = elqcp_sol_alloc(N, nx, nu);
+ELQCPSol sol = elqcp_sol_alloc(prob);
+
+// Initial state (parameter)
+Eigen::VectorXd x0(2);
+x0 << 1.0, 0.0;
 
 // Solve
-double x0[nx] = { ... };
-elqcp_solve_riccati(prob, x0, sol);       // O(N)   — structure-exploiting DP
-elqcp_solve_kkt_sparse(prob, x0, sol);    // O(N)   — sparse LU via UMFPACK
-elqcp_solve_kkt(prob, x0, sol);           // O(N^3) — dense LU, reference only
+double phi_riccati = elqcp_solve_riccati(prob, x0, sol);
+double phi_kkt     = elqcp_solve_kkt_sparse(prob, x0, sol);
 
-// Access results: sol->x[k], sol->u[k], sol->phi
-
-// Free
-elqcp_sol_free(sol, N);
-elqcp_free(prob);
+// Access results
+for (int k = 0; k <= prob.N; k++)
+    Eigen::VectorXd xk = sol.x[k];  // state at stage k
+for (int k = 0; k < prob.N; k++)
+    Eigen::VectorXd uk = sol.u[k];  // input at stage k
+double phi = sol.opt_val;            // optimal objective value
 ```
+
+---
+
+## Optimization Note: Symmetric-Indefinite KKT Solvers
+
+The current implementation uses `Eigen::SparseLU` with COLAMD ordering, which treats the **structurally symmetric** KKT matrix as a general unsymmetric matrix. This is robust and requires no external dependencies, but pays a ~2× cost in both memory and flops compared to a dedicated symmetric-indefinite solver.
+
+### When to consider alternatives:
+
+For **large systems** (e.g., $n_x = 20, n_u = 10$) where the KKT matrix is $O(30N) \times O(30N)$ with dense blocks, a true symmetric-indefinite LDL^T factorization (using Bunch-Kaufman pivoting and symmetric AMD ordering) could provide meaningful speedup.
+
+### Available options (and limitations):
+
+| Solver | Library | Advantages | Limitations |
+|--------|---------|------------|-----------
+| **SparseLU** (current) | Eigen (built-in) | Portable, no dependencies, stable | ~2× overhead from treating as unsymmetric |
+| **Pardiso LDL^T** | Intel MKL via `Eigen::PardisoLDLT` | Full Bunch-Kaufman pivoting, best asymptotic complexity | MKL is large (~1 GB), not natively available on Apple Silicon, license restricted |
+| **CHOLMOD LDL^T** | SuiteSparse via `Eigen::CholmodDecomposition` | Lightweight (~50 MB), AMD ordering, available on all platforms | Simplicial LDL^T lacks Bunch-Kaufman pivoting — factorization fails on indefinite systems due to zero/negative pivots |
+| **UMFPACK** | SuiteSparse via `Eigen::UmfPackLU` | Recommended in Jørgensen et al. (2012) | Unsymmetric solver like SparseLU — no benefit over current choice |
+
+**Recommendation:** The current `Eigen::SparseLU` approach is the right balance of **correctness, portability, and simplicity** for the broadest range of users. If you have a specific large-scale deployment target (e.g., always x86-64 Linux with MKL installed), Pardiso is viable; otherwise, stick with the built-in solver.
