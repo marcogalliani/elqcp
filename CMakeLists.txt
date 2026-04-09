@@ -32,3 +32,9 @@ target_link_libraries(elqcp_lib Eigen3::Eigen)
 # ----------------------------------------------------------------------------
 add_executable(compare_solvers examples/compare_solvers.cpp)
 target_link_libraries(compare_solvers elqcp_lib)
+
+# ----------------------------------------------------------------------------
+# Example: nonlinear ODE smoothing via Riccati-SQP
+# ----------------------------------------------------------------------------
+add_executable(nonlinear_smoothing_sqp examples/nonlinear_smoothing_sqp.cpp)
+target_link_libraries(nonlinear_smoothing_sqp elqcp_lib)

@@ -83,6 +83,7 @@ The KKT matrix has **block-banded, symmetric indefinite** structure with $O(N(n_
 ```
 elqcp/
 ├── CMakeLists.txt
+├── plot_scaling.py     # Matplotlib script for timing benchmark scaling
 ├── include/
 │   └── elqcp.hpp        # Problem/solution structs and solver API (C++ / Eigen)
 ├── src/
@@ -90,7 +91,8 @@ elqcp/
 │   └── kkt_sparse_solver.cpp  # elqcp_solve_kkt_sparse() via Eigen::SparseLU
 ├── examples/
 │   ├── compare_solvers.cpp  # Riccati vs sparse KKT timing benchmark
-│   └── plot_scaling.py      # Matplotlib script: timing graphs
+│   ├── nonlinear_smoothing_sqp.cpp # Nonlinear ODE smoothing via Riccati-SQP
+│   └── plot_nonlinear_smoothing.py # Plots + GIF for smoothing experiment
 └── docs/
     ├── jorgensen-2004.pdf   # Moving Horizon Estimation and Control (PhD thesis)
     ├── jorgensen-2012.pdf   # Numerical Methods for Solution of the ELQCP (IFAC NMPC)
@@ -121,6 +123,7 @@ make -j4
 This builds:
 - `libelqcp_lib.a` — static library (Riccati and sparse KKT solvers)
 - `compare_solvers` — timing/correctness benchmark
+- `nonlinear_smoothing_sqp` — nonlinear ODE smoothing experiment (SQP + Riccati)
 
 ---
 
@@ -175,6 +178,48 @@ python3 plot_scaling.py
 Generates:
 - `scaling.png` — log-log plot of solve time vs. horizon length
 - `scaling_ratio.png` — semilog-x plot of SparseLU/Riccati ratio
+
+---
+
+## Applied Experiment: ODE-Regularized Smoothing (SQP + Riccati)
+
+This experiment solves the nonlinear inner problem (fixed parameter $\theta$):
+
+$$
+\min_u \sum_{j=0}^{N}(y_j - y_j^{\text{obs}})^2 + \lambda\,\Delta t\sum_{k=0}^{N-1}u_k^2
+$$
+
+subject to the discretized nonlinear dynamics (explicit Euler):
+
+$$
+y_{k+1} = y_k + \Delta t\left(-0.05y_k^3 + 1.2\sin(t_k) + u_k\right).
+$$
+
+At each SQP iteration, the nonlinear model is linearized and a structured ELQCP QP subproblem is solved with `elqcp_solve_riccati`.
+
+### Run
+
+```bash
+cd build
+./nonlinear_smoothing_sqp
+```
+
+The executable writes:
+- `nonlinear_smoothing_trajectory.csv` — time, true trajectory, noisy observations, smoothed estimate, control
+- `nonlinear_smoothing_optimization.csv` — SQP iteration logs (cost, gradient norm, step size, FD check)
+- `nonlinear_smoothing_iterates.csv` — trajectory snapshots by SQP iteration (for animation)
+
+### Plot results
+
+From repository root:
+
+```bash
+python3 examples/plot_nonlinear_smoothing.py --data-dir .
+```
+
+Generates:
+- `nonlinear_smoothing_summary.png` — trajectory, control, convergence, FD-gradient-check panels
+- `nonlinear_smoothing_animation.gif` — trajectory evolution across SQP iterations
 
 ---
 
